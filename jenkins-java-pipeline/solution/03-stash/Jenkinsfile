@@ -1,0 +1,59 @@
+// spring-petclinic : trois stages, deux agents, et stash pour passer les fichiers
+
+// Un workspace est réutilisé d'un build à l'autre : chaque stage repart propre, puis reprend ce dont il a besoin.
+def fresh(String... stashes) {
+  cleanWs()
+  stashes.each { unstash it }
+}
+
+pipeline {
+  agent none
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    skipDefaultCheckout()
+  }
+
+  environment {
+    MAVEN_IMAGE = 'maven:3.9.16-eclipse-temurin-21-noble'
+    NETWORK     = 'layers-jenkins'              // le réseau de la stack : reposilite et registry y sont joignables
+    M2_REPO     = '/home/jenkins/caches/m2'     // hors du workspace, que le checkstyle de petclinic analyse
+  }
+
+  stages {
+    stage('Récupérer le code') {
+      agent { label 'maven' }
+      steps {
+        cleanWs()
+        checkout scm
+        stash name: 'sources'
+      }
+    }
+
+    stage('Compiler et tester') {
+      agent { label 'maven' }
+      steps {
+        fresh 'sources'
+        script {
+          docker.image(env.MAVEN_IMAGE).inside("--network ${env.NETWORK}") {
+            configFileProvider([configFile(fileId: 'maven-settings', variable: 'MAVEN_SETTINGS')]) {
+              sh 'mvn -B -s "$MAVEN_SETTINGS" -Dmaven.repo.local=$M2_REPO package'
+            }
+          }
+        }
+        stash name: 'jar', includes: 'target/spring-petclinic-*.jar'
+      }
+      post {
+        always { junit 'target/surefire-reports/*.xml' }
+      }
+    }
+
+    stage('Vérifier le JAR sur agent2') {
+      agent { label 'agent2' }
+      steps {
+        fresh 'jar'
+        sh 'ls -l target/'
+      }
+    }
+  }
+}

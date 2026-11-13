@@ -1,0 +1,104 @@
+{
+  "authentication": {
+    "bruteForceProtection": {
+      "enabled": false,
+      "maxAttempts": 10,
+      "banDurationSeconds": 300
+    },
+    "ldap": {
+      "enabled": false,
+      "ssl": false,
+      "hostname": "ldap.domain.com",
+      "port": 389,
+      "baseDn": "dc=company,dc=com",
+      "searchUserDn": "cn=reposilite,ou=admins,dc=domain,dc=com",
+      "searchUserPassword": "reposilite-admin-secret",
+      "typeAttribute": "person",
+      "userAttribute": "cn",
+      "userFilter": "(&(objectClass=person)(ou=Maven Users))",
+      "userType": "PERSISTENT"
+    }
+  },
+  "frontend": {
+    "id": "reposilite-repository",
+    "title": "Reposilite Repository",
+    "description": "Public Maven repository hosted through the Reposilite",
+    "organizationWebsite": "https://reposilite.com",
+    "organizationLogo": "https://avatars.githubusercontent.com/u/88636591",
+    "privacyPolicy": "",
+    "icpLicense": ""
+  },
+  "maven": {
+    "repositories": [
+      {
+        "id": "releases",
+        "visibility": "PUBLIC",
+        "redeployment": false,
+        "preserveSnapshots": false,
+        "storageProvider": {
+          "type": "fs",
+          "quota": "100%",
+          "mount": ""
+        },
+        "storagePolicy": "PRIORITIZE_UPSTREAM_METADATA",
+        "metadataMaxAge": 0,
+        "resolutionCacheMaxEntries": 0,
+        "proxied": [
+          {
+            "reference": "https://repo.maven.apache.org/maven2",
+            "store": true,
+            "connectTimeout": 3,
+            "readTimeout": 30,
+            "allowedGroups": [],
+            "allowedExtensions": [
+              ".jar",
+              ".war",
+              ".pom",
+              ".xml",
+              ".md5",
+              ".sha1",
+              ".sha256",
+              ".sha512",
+              ".asc",
+              ".module"
+            ]
+          }
+        ],
+        "parallelMetadataLookup": false,
+        "resolutionCacheLevel": "NEGATIVE_CACHING"
+      },
+      {
+        "id": "snapshots",
+        "visibility": "PUBLIC",
+        "redeployment": true,
+        "preserveSnapshots": false,
+        "storageProvider": {
+          "type": "fs",
+          "quota": "100%",
+          "mount": ""
+        },
+        "storagePolicy": "PRIORITIZE_UPSTREAM_METADATA",
+        "metadataMaxAge": 0,
+        "resolutionCacheMaxEntries": 0,
+        "proxied": [],
+        "parallelMetadataLookup": false,
+        "resolutionCacheLevel": "NEGATIVE_CACHING"
+      }
+    ]
+  },
+  "javadoc": {
+    "enabled": true,
+    "suffixes": [
+      "-javadoc.jar",
+      "-groovydoc.jar"
+    ]
+  },
+  "statistics": {
+    "enabled": true,
+    "resolvedRequestsInterval": "MONTHLY"
+  },
+  "web": {
+    "forwardedIp": "X-Forwarded-For",
+    "forwardedPrefix": ""
+  }
+}

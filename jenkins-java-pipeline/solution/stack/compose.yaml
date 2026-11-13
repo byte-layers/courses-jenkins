@@ -1,0 +1,120 @@
+name: layers-jenkins
+
+x-agent: &agent
+  build: ./agent
+  image: layers-jenkins-agent:local     # construite une fois, pour les deux agents
+  init: true
+  restart: unless-stopped
+  secrets: [agent_connector_password]
+  group_add: ["${DOCKER_GID:-0}"]
+  depends_on:
+    jenkins: { condition: service_healthy }
+
+services:
+  jenkins:
+    build: ./jenkins
+    restart: unless-stopped
+    ports: ["127.0.0.1:28500:8080"]
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./jenkins/casc:/casc:ro
+    secrets: [jenkins_admin_password, agent_connector_password, gitea_password, reposilite_token]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/login"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  agent1:
+    <<: *agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # lab seulement : l'agent pilote le moteur Docker de l'hôte
+      - caches:/home/jenkins/caches                 # dépôt Maven et bases des scanners, partagés
+      - agent1_work:/home/jenkins/agent                # les workspaces
+    environment:
+      JENKINS_URL: http://jenkins:8080
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_AGENT_NAME: agent1
+      JENKINS_AGENT_WORKDIR: /home/jenkins/agent
+
+  agent2:
+    <<: *agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # lab seulement : l'agent pilote le moteur Docker de l'hôte
+      - caches:/home/jenkins/caches                 # dépôt Maven et bases des scanners, partagés
+      - agent2_work:/home/jenkins/agent                # les workspaces
+    environment:
+      JENKINS_URL: http://jenkins:8080
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_AGENT_NAME: agent2
+      JENKINS_AGENT_WORKDIR: /home/jenkins/agent
+
+  gitea:
+    image: gitea/gitea:28.2.0
+    restart: unless-stopped
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__server__ROOT_URL: http://localhost:28530/
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__DISABLE_SSH: "true"
+      GITEA__service__DISABLE_REGISTRATION: "true"
+      GITEA__actions__ENABLED: "false"          # petclinic contient des workflows GitHub : sans runner, ils resteraient « en attente »
+      GITEA__security__ALLOWED_HOST_LIST: private   # le webhook vise jenkins, une adresse privée
+    ports: ["127.0.0.1:28530:3000"]
+    volumes: [gitea_data:/data]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/healthz"]
+      interval: 5s
+      retries: 30
+
+  gitea-init:
+    image: gitea/gitea:28.2.0
+    entrypoint: ["/init.sh"]
+    restart: "no"
+    volumes:
+      - gitea_data:/data
+      - ./gitea-init/init.sh:/init.sh:ro
+    secrets: [gitea_password]
+    depends_on:
+      gitea: { condition: service_healthy }
+
+  reposilite:
+    image: dzikoysk/reposilite:3.6.4
+    restart: unless-stopped
+    entrypoint:
+      - sh
+      - -c
+      - REPOSILITE_OPTS="--token jenkins:$$(cat /run/secrets/reposilite_token) --shared-configuration=/config/configuration.shared.json" exec /app/entrypoint.sh
+    ports: ["127.0.0.1:28540:8080"]
+    volumes:
+      - reposilite_data:/app/data
+      - ./reposilite/configuration.shared.json:/config/configuration.shared.json:ro
+    secrets: [reposilite_token]
+
+  registry:
+    image: registry:3.1.1
+    restart: unless-stopped
+    ports: ["127.0.0.1:28550:5000"]
+    volumes: [registry_data:/var/lib/registry]
+
+networks:
+  default:
+    name: layers-jenkins
+
+volumes:
+  jenkins_home:
+  agent1_work:
+  agent2_work:
+  caches:
+  gitea_data:
+  reposilite_data:
+  registry_data:
+
+secrets:
+  jenkins_admin_password: { file: ./secrets/jenkins_admin_password }
+  agent_connector_password: { file: ./secrets/agent_connector_password }
+  gitea_password: { file: ./secrets/gitea_password }
+  reposilite_token: { file: ./secrets/reposilite_token }

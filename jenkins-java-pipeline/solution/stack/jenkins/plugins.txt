@@ -1,0 +1,15 @@
+# Les plugins installés à la construction de l'image (jenkins-plugin-cli), avec leurs dépendances.
+# Versions figées le 2026-11-13.
+configuration-as-code:2147.v8a_8d38668c72
+job-dsl:3732.v9a_c49a_61a_313
+workflow-aggregator:608.v67378e9d3db_1
+pipeline-graph-view:1053.v9df19e6ceed2
+git:5.11.0
+gitea:286.v0740a_413c1eb_
+docker-workflow:653.v2f2c08eff0ec
+junit:1458.1460.vd53b_087eeb_2c
+warnings-ng:13.10345.v6642ea_283a_ef
+credentials-binding:728.v902a_273b_8947
+config-file-provider:1013.v73c323e52b_1f
+matrix-auth:3.3
+ws-cleanup:0.49

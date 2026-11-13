@@ -1,0 +1,24 @@
+jobs:
+  - script: |
+      multibranchPipelineJob('petclinic') {
+        displayName('spring-petclinic')
+        branchSources {
+          branchSource {
+            source {
+              giteaSCMSource {
+                id('petclinic-gitea')
+                serverUrl('http://gitea:3000')
+                repoOwner('learner')
+                repository('spring-petclinic')
+                credentialsId('gitea')
+                traits {
+                  giteaBranchDiscovery { strategyId(1) }
+                  giteaPullRequestDiscovery { strategyId(1) }
+                  giteaTagDiscovery()
+                }
+              }
+            }
+          }
+        }
+        orphanedItemStrategy { discardOldItems { numToKeep(5) } }
+      }

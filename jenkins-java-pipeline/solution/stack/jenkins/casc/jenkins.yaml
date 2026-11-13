@@ -1,0 +1,85 @@
+jenkins:
+  systemMessage: "byte_layers — lab pipeline Java. Cette instance est décrite par JCasC (/casc/jenkins.yaml)."
+  numExecutors: 0          # le contrôleur orchestre, les builds tournent sur les agents
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: admin
+          password: "${jenkins_admin_password}"
+        - id: agent-connector
+          password: "${agent_connector_password}"
+  authorizationStrategy:
+    globalMatrix:
+      entries:
+        - user:
+            name: admin
+            permissions: ["Overall/Administer"]
+        - user:
+            name: agent-connector
+            permissions: ["Overall/Read", "Agent/Connect"]
+  nodes:
+    - permanent:
+        name: agent1
+        labelString: "maven docker scan"
+        numExecutors: 2
+        remoteFS: /home/jenkins/agent
+        launcher:
+          inbound:
+            webSocket: true
+    - permanent:
+        name: agent2
+        labelString: "maven docker scan"
+        numExecutors: 2
+        remoteFS: /home/jenkins/agent
+        launcher:
+          inbound:
+            webSocket: true
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - usernamePassword:
+              scope: GLOBAL
+              id: gitea
+              description: "Gitea — compte learner"
+              username: learner
+              password: "${gitea_password}"
+          - usernamePassword:
+              scope: GLOBAL
+              id: reposilite
+              description: "Reposilite — jeton jenkins"
+              username: jenkins
+              password: "${reposilite_token}"
+
+unclassified:
+  location:                # l'adresse publique de Jenkins, utilisée dans les liens
+    url: "http://localhost:28500/"
+  giteaServers:
+    servers:
+      - displayName: gitea
+        serverUrl: "http://gitea:3000"
+        aliasUrl: "http://localhost:28530"
+        manageHooks: false
+  globalConfigFiles:
+    configs:
+      - mavenSettings:
+          id: maven-settings
+          name: "Maven — Reposilite"
+          comment: "Maven Central passe par Reposilite, et le credential reposilite sert à publier"
+          isReplaceAll: true
+          serverCredentialMappings:
+            - serverId: reposilite
+              credentialsId: reposilite
+          content: |
+            <settings>
+              <mirrors>
+                <mirror>
+                  <id>reposilite</id>
+                  <mirrorOf>central</mirrorOf>
+                  <url>http://reposilite:8080/releases</url>
+                </mirror>
+              </mirrors>
+            </settings>
+

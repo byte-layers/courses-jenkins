@@ -1,0 +1,197 @@
+// spring-petclinic : le pipeline complet du lab
+
+// Un workspace est réutilisé d'un build à l'autre : chaque stage repart propre, puis reprend ce dont il a besoin.
+def fresh(String... stashes) {
+  cleanWs()
+  stashes.each { unstash it }
+}
+
+pipeline {
+  agent none
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    skipDefaultCheckout()
+  }
+
+  environment {
+    MAVEN_IMAGE = 'maven:3.9.16-eclipse-temurin-21-noble'
+    NETWORK     = 'layers-jenkins'              // le réseau de la stack : reposilite et registry y sont joignables
+    M2_REPO     = '/home/jenkins/caches/m2'     // hors du workspace, que le checkstyle de petclinic analyse
+    IMAGE       = 'localhost:28550/petclinic'   // le registre, vu par le moteur Docker
+  }
+
+  stages {
+    stage('Récupérer le code') {
+      agent { label 'maven' }
+      steps {
+        cleanWs()
+        script {
+          def scmVars = checkout scm
+          env.IMAGE_TAG = "${scmVars.GIT_COMMIT.take(7)}-${env.BUILD_NUMBER}"   // par exemple 1a2b3c4-12
+        }
+        stash name: 'sources'
+      }
+    }
+
+    stage('Compiler et contrôler') {
+      parallel {
+        stage('Compiler et tester') {
+          agent { label 'maven' }
+          steps {
+            fresh 'sources'
+            script {
+              docker.image(env.MAVEN_IMAGE).inside("--network ${env.NETWORK}") {
+                configFileProvider([configFile(fileId: 'maven-settings', variable: 'MAVEN_SETTINGS')]) {
+                  sh 'mvn -B -s "$MAVEN_SETTINGS" -Dmaven.repo.local=$M2_REPO package'
+                }
+              }
+            }
+            stash name: 'jar', includes: 'target/spring-petclinic-*.jar'
+          }
+          post {
+            always { junit 'target/surefire-reports/*.xml' }
+          }
+        }
+
+        stage('SAST : semgrep') {
+          agent { label 'scan' }
+          steps {
+            fresh 'sources'
+            script {
+              docker.image('semgrep/semgrep:1.181.1').inside('--entrypoint=') {
+                sh 'semgrep scan --config p/java --metrics=off --sarif --output semgrep.sarif .'
+              }
+            }
+            recordIssues tool: sarif(id: 'semgrep', name: 'Semgrep', pattern: 'semgrep.sarif'),
+                         qualityGates: [[threshold: 1, type: 'TOTAL', criticality: 'UNSTABLE']]
+          }
+        }
+
+        stage('Dépendances : osv-scanner') {
+          agent { label 'scan' }
+          steps {
+            fresh 'sources'
+            script {
+              docker.image('ghcr.io/google/osv-scanner:v2.6.0').inside('--entrypoint=') {
+                // code 1 = des vulnérabilités trouvées : c'est le rapport qui décide, pas le code de sortie
+                sh '/osv-scanner scan source --format sarif --output-file osv.sarif . || [ $? -eq 1 ]'
+              }
+            }
+            recordIssues tool: sarif(id: 'osv', name: 'OSV-Scanner', pattern: 'osv.sarif')
+          }
+        }
+
+        stage('Configuration : kics') {
+          agent { label 'scan' }
+          steps {
+            fresh 'sources'
+            script {
+              docker.image('checkmarx/kics:v2.2.0').inside('--entrypoint=') {
+                sh 'kics scan -p . --type Dockerfile,DockerCompose --report-formats sarif -o kics --ignore-on-exit results --no-progress'
+              }
+            }
+            recordIssues tool: sarif(id: 'kics', name: 'KICS', pattern: 'kics/results.sarif')
+          }
+        }
+
+        stage('Secrets : gitleaks') {
+          agent { label 'scan' }
+          steps {
+            fresh 'sources'
+            script {
+              docker.image('zricethezav/gitleaks:v8.30.1').inside('--entrypoint=') {
+                sh 'gitleaks dir . --report-format sarif --report-path gitleaks.sarif --exit-code 0'
+              }
+            }
+            recordIssues tool: sarif(id: 'gitleaks', name: 'Gitleaks', pattern: 'gitleaks.sarif'),
+                         qualityGates: [[threshold: 1, type: 'TOTAL', criticality: 'UNSTABLE']]
+          }
+        }
+      }
+    }
+
+    stage('Publier le JAR') {
+      when { beforeAgent true; branch 'main' }
+      agent { label 'maven' }
+      steps {
+        fresh 'sources', 'jar'
+        script {
+          docker.image(env.MAVEN_IMAGE).inside("--network ${env.NETWORK}") {
+            configFileProvider([configFile(fileId: 'maven-settings', variable: 'MAVEN_SETTINGS')]) {
+              // publie le JAR qui a passé les tests, sans le recompiler
+              sh '''
+                mvn -B -s "$MAVEN_SETTINGS" -Dmaven.repo.local=$M2_REPO deploy:deploy-file \
+                  -Dfile=$(ls target/spring-petclinic-*.jar) -DpomFile=pom.xml \
+                  -DrepositoryId=reposilite -Durl=http://reposilite:8080/snapshots
+              '''
+            }
+          }
+        }
+      }
+    }
+
+    stage("Construire l'image") {
+      when { beforeAgent true; branch 'main' }
+      agent { label 'docker' }
+      steps {
+        fresh 'sources', 'jar'
+        sh 'docker build -t "$IMAGE:$IMAGE_TAG" .'
+        sh 'docker push "$IMAGE:$IMAGE_TAG"'
+      }
+    }
+
+    stage("SBOM et scan de l'image") {
+      when { beforeAgent true; branch 'main' }
+      agent { label 'scan' }
+      steps {
+        cleanWs()
+        script {
+          // syft lit l'image dans le registre, sur le réseau de la stack
+          docker.image('anchore/syft:v1.54.1-debug').inside("--entrypoint= --network ${env.NETWORK} -e SYFT_REGISTRY_INSECURE_USE_HTTP=true -e SYFT_CACHE_DIR=/home/jenkins/caches/syft") {
+            sh '/syft registry:registry:5000/petclinic:$IMAGE_TAG -o cyclonedx-json=petclinic.cdx.json'
+          }
+          docker.image('anchore/grype:v0.120.1-debug').inside('--entrypoint= -e GRYPE_DB_CACHE_DIR=/home/jenkins/caches/grype') {
+            // une vulnérabilité critique rend le build instable, au lieu de l'arrêter
+            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+              sh '/grype sbom:petclinic.cdx.json -o sarif --file grype.sarif --fail-on critical'
+            }
+          }
+        }
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'petclinic.cdx.json', allowEmptyArchive: true
+          recordIssues enabledForFailure: true, tool: sarif(id: 'grype', name: 'Grype', pattern: 'grype.sarif')
+        }
+      }
+    }
+
+    stage('Compatibilité Java') {
+      when { beforeAgent true; anyOf { branch 'main'; changeRequest() } }
+      matrix {
+        axes {
+          axis {
+            name 'JDK'
+            values '17', '21', '25'
+          }
+        }
+        agent { label 'maven' }
+        stages {
+          stage('Compiler et tester') {
+            steps {
+              fresh 'sources'
+              script {
+                docker.image("maven:3.9.16-eclipse-temurin-${env.JDK}-noble").inside("--network ${env.NETWORK}") {
+                  configFileProvider([configFile(fileId: 'maven-settings', variable: 'MAVEN_SETTINGS')]) {
+                    sh 'mvn -B -s "$MAVEN_SETTINGS" -Dmaven.repo.local=$M2_REPO verify'
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
