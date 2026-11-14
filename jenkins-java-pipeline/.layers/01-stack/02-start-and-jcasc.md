@@ -44,13 +44,35 @@ Mettre les plugins dans l'image rend le contrôleur reproductible : deux démarr
 
 > 📖 [L'image Docker officielle de Jenkins et `jenkins-plugin-cli`](https://github.com/jenkinsci/docker#preinstalling-plugins) · [Le plugin Configuration as Code](https://plugins.jenkins.io/configuration-as-code/)
 
-## Sous Linux : donner aux agents l'accès au moteur Docker
+## Donner aux agents l'accès au moteur Docker
 
-Les agents pilotent le moteur Docker de votre poste par son socket, comme l'explique la fin de ce chapitre. Ils tournent avec l'utilisateur `jenkins`, et le service ajoute à cet utilisateur le groupe propriétaire du socket, par la ligne `group_add: ["${DOCKER_GID:-0}"]` de `compose.yaml`. Avec Docker Desktop (Mac, Windows), ce groupe vaut 0, la valeur par défaut : il n'y a rien à faire. Sous Linux, le socket appartient au groupe `docker`, dont le numéro varie d'une machine à l'autre. Si vous êtes sous Linux, écrivez ce numéro dans un fichier `.env`, que Compose lit au démarrage :
+Les agents pilotent le moteur Docker par son socket, comme l'explique la fin de ce chapitre. Ils tournent avec l'utilisateur `jenkins`, et le service ajoute à cet utilisateur le groupe propriétaire du socket, par la ligne `group_add: ["${DOCKER_GID:-0}"]` de `compose.yaml`. Le numéro de ce groupe dépend de l'installation : 0 avec Docker Desktop (Mac, Windows), celui du groupe `docker` sous Linux, qui varie d'une machine à l'autre.
 
-```bash
-cd ~/byte-layers/jenkins/pipeline/stack && echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" > .env
+Plutôt que de chercher ce numéro, nous allons le demander au moteur lui-même, et l'écrire dans un fichier `.env`, que Compose lit au démarrage. C'est encore une étape de préparation : lancez-la avec ▶ quel que soit votre système.
+
+```exec "Écrire le groupe du socket dans .env"
+cd ~/byte-layers/jenkins/pipeline/stack && echo "DOCKER_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.22 stat -c %g /var/run/docker.sock)" > .env
 ```
+
+> 🔍 **Comprendre la commande**
+>
+> | Morceau | Rôle |
+> |---|---|
+> | `docker run --rm … alpine:3.22` | lance un petit conteneur Alpine, supprimé dès qu'il a fini (`--rm`) |
+> | `-v /var/run/docker.sock:/var/run/docker.sock` | lui monte le socket du moteur, comme le fait `compose.yaml` pour les agents |
+> | `stat -c %g /var/run/docker.sock` | affiche le numéro du groupe propriétaire du socket (`%g`), vu de l'intérieur d'un conteneur, donc tel que les agents le verront |
+> | `$( … )` | la substitution : le shell exécute la commande entre parenthèses et met sa sortie à sa place |
+> | `echo "DOCKER_GID=…" > .env` | écrit la ligne obtenue dans le fichier `.env` ; `>` remplace le fichier s'il existait |
+>
+> Pourquoi un conteneur, et pas `stat` directement sur votre poste ? Parce que le moteur n'est pas toujours sur votre machine : sur un poste du lab hébergé, il tourne dans un conteneur voisin, et son socket n'existe pas dans votre terminal. Le conteneur voit le socket comme les agents le verront, partout.
+
+Affichez le fichier pour voir le numéro obtenu :
+
+```exec "Afficher le fichier .env"
+cat ~/byte-layers/jenkins/pipeline/stack/.env
+```
+
+Avec Docker Desktop, vous lisez `DOCKER_GID=0` ; sur un poste du lab hébergé, `DOCKER_GID=2375`.
 
 ## Démarrer la stack
 
@@ -100,7 +122,15 @@ Si `docker compose up` échoue sur `port is already allocated`, un autre program
 
 ## Se connecter, et constater qu'un agent manque
 
-Ouvrez http://localhost:28500 et connectez-vous avec l'utilisateur `admin` et le mot de passe du fichier `secrets/jenkins_admin_password`. Aucun assistant ne s'affiche : en haut de la page d'accueil, le message système dit que l'instance est décrite par JCasC.
+Pour vous connecter, il vous faut le mot de passe du compte `admin`, que vous avez généré dans le fichier `secrets/jenkins_admin_password`. Affichez-le :
+
+```exec "Afficher le mot de passe d'admin"
+cat ~/byte-layers/jenkins/pipeline/stack/secrets/jenkins_admin_password; echo
+```
+
+Le `echo` final ajoute seulement un retour à la ligne, puisque le fichier n'en contient pas.
+
+Ouvrez http://localhost:28500 et connectez-vous avec l'utilisateur `admin` et ce mot de passe. Aucun assistant ne s'affiche : en haut de la page d'accueil, le message système dit que l'instance est décrite par JCasC.
 
 Ouvrez maintenant **Administrer Jenkins › Nodes** (*Nœuds* si votre navigateur est en français). Vous devez y voir le contrôleur, `Built-In Node`, et un seul agent, `agent1`. Le service `agent2` tourne pourtant. Lisez son journal :
 
