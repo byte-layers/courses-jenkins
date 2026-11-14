@@ -101,25 +101,49 @@ La stack a besoin de quatre mots de passe, qu'elle lit dans des fichiers du doss
 | `gitea_password` | le mot de passe du compte `learner` de Gitea, avec lequel vous clonez et poussez |
 | `reposilite_token` | le jeton avec lequel Jenkins publie dans Reposilite |
 
-Compose les monte dans les conteneurs sous `/run/secrets/`, comme des **secrets Compose** : ils n'apparaissent ni dans les variables d'environnement ni dans `docker inspect`. Créez le dossier :
+Compose les monte dans les conteneurs sous `/run/secrets/`, comme des **secrets Compose** : ils n'apparaissent ni dans les variables d'environnement ni dans `docker inspect`.
+
+Cette section prépare l'environnement, elle n'est pas le sujet du lab : vous pouvez lancer chaque commande avec ▶, et ouvrir les explications 🔍 seulement si une commande vous intrigue.
+
+Nous allons d'abord créer le dossier `secrets/`, qui recevra les quatre fichiers :
 
 ```exec "Créer le dossier des secrets"
 mkdir -p ~/byte-layers/jenkins/pipeline/stack/secrets
 ```
 
-Générez maintenant un mot de passe aléatoire par fichier. `openssl rand -hex 12` produit 24 caractères hexadécimaux, et `tr -d '\n'` retire le saut de ligne final, pour que le fichier contienne le mot de passe et rien d'autre :
+Il faut maintenant un mot de passe aléatoire dans chacun des quatre fichiers. Plutôt que de taper quatre fois la même commande, une boucle crée les quatre fichiers d'un coup, avec un mot de passe différent dans chacun :
 
 ```exec "Générer les quatre secrets"
 cd ~/byte-layers/jenkins/pipeline/stack && for s in jenkins_admin_password agent_connector_password gitea_password reposilite_token; do openssl rand -hex 12 | tr -d '\n' > "secrets/$s"; done
 ```
 
-Vous aurez besoin du mot de passe d'`admin` pour vous connecter à Jenkins. Affichez-le :
+> 🔍 **Comprendre la commande**
+>
+> | Morceau | Rôle |
+> |---|---|
+> | `cd ~/byte-layers/jenkins/pipeline/stack &&` | se place dans le dossier de la stack ; `&&` ne lance la suite que si le `cd` a réussi |
+> | `for s in jenkins_admin_password … reposilite_token; do … done` | une boucle : elle exécute ce qui est entre `do` et `done` une fois par nom de la liste, et la variable `s` prend tour à tour la valeur de chaque nom |
+> | `openssl rand -hex 12` | tire 12 octets au hasard et les écrit en hexadécimal, soit 24 caractères |
+> | `\| tr -d '\n'` | le pipe `\|` passe ce texte à `tr`, qui supprime (`-d`) le retour à la ligne final : le fichier contient le mot de passe et rien d'autre |
+> | `> "secrets/$s"` | la redirection `>` écrit le résultat dans un fichier, dont le nom est celui du tour de boucle (`$s`) ; les guillemets protègent le nom si jamais il contenait un espace |
 
-```exec "Afficher le mot de passe d'admin"
-cat ~/byte-layers/jenkins/pipeline/stack/secrets/jenkins_admin_password; echo
+Vérifions que les quatre fichiers existent et contiennent chacun 24 caractères :
+
+```exec "Compter les caractères des secrets"
+cd ~/byte-layers/jenkins/pipeline/stack && wc -c secrets/*
 ```
 
-Le `echo` final ajoute seulement un retour à la ligne, puisque le fichier n'en contient pas.
+`wc -c` compte les caractères de chaque fichier :
+
+```
+      24 secrets/agent_connector_password
+      24 secrets/gitea_password
+      24 secrets/jenkins_admin_password
+      24 secrets/reposilite_token
+      96 total
+```
+
+Un fichier à 0 voudrait dire qu'`openssl` a échoué : relancez la génération. Pour lire un mot de passe, il suffit d'afficher son fichier avec `cat`, comme on le fera pour se connecter à Jenkins.
 
 ```verify
 D="$HOME/byte-layers/jenkins/pipeline/stack/secrets"
